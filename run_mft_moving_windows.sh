@@ -10,10 +10,11 @@ option_hist="rebinROF logy logx"
 option_plot="hist"
 str_sor="STF"
 str_eor="EOR"
+plot_next=true
 rewrite_root=false
 
 root -b -l <<EOF
 .L mft_moving_windows.cxx
-mft_moving_windows($run,"$pass","$path","$hname","$title","$option_hist","$option_plot","$str_sor","$str_eor",$rewrite_root)
+mft_moving_windows($run,"$pass","$path","$hname","$title","$option_hist","$option_plot","$str_sor","$str_eor",$plot_next,$rewrite_root)
 .q
 EOF

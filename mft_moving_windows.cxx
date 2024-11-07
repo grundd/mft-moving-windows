@@ -33,6 +33,7 @@ std::string _opt_hist;
 std::string _opt_plot;
 std::string _str_sor;
 std::string _str_eor;
+bool _plot_next;
 bool _rewrite_root;
 
 long get_timestamp (int run, std::string str) 
@@ -297,7 +298,7 @@ void run_moving_windows (bool verbose = false)
 
     TH1F* h_next = NULL;
     std::vector<long> val_next;
-    if (i < arr->GetEntries()-1) {
+    if (i < arr->GetEntries()-1 && _plot_next) {
       h_next = (TH1F*)arr->At(i+1);
       val_next = get_validity_from_name(h_next->GetName());
     }
@@ -327,6 +328,7 @@ void mft_moving_windows (
   std::string opt_plot,
   std::string str_sor,
   std::string str_eor,
+  bool plot_next,
   bool rewrite_root
 ) {
   _run = run;
@@ -338,6 +340,7 @@ void mft_moving_windows (
   _opt_plot = opt_plot;
   _str_sor = str_sor;
   _str_eor = str_eor;
+  _plot_next = plot_next;
   _rewrite_root = rewrite_root;
   run_moving_windows();
 }
