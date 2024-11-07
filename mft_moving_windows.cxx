@@ -18,14 +18,22 @@
 #include "TLatex.h"
 // o2 headers
 #include "CCDB/CcdbApi.h"
+// custom headers
+#include "binning_rof.h"
 
 o2::ccdb::CcdbApi api_ccdb;
 o2::ccdb::CcdbApi api_qcdb;
 
-std::string str_sor = "STF";
-std::string str_eor = "EOR";
-std::string mw_path = "qc_async/MFT/MO/Tracks/mw/";
-bool rewrite_root = false;
+int _run;
+std::string _pass;
+std::string _path;
+std::string _hname;
+std::string _title;
+std::string _opt_hist;
+std::string _opt_plot;
+std::string _str_sor;
+std::string _str_eor;
+bool _rewrite_root;
 
 long get_timestamp (int run, std::string str) 
 {
@@ -60,7 +68,6 @@ std::string timestamp_to_date_string (long ts_ms, bool hours_only = false, bool 
     if(hours_only) std::cout << "as hh:mm:ss: " << date << "\n\n";
     else           std::cout << "as mm/dd/yyyy hh:mm:ss: " << date << "\n\n";
   }
-      
   return date;
 }
 
@@ -84,13 +91,13 @@ std::vector<long> get_validity_from_name (std::string s, std::string delimiter =
 }
 
 template <typename TH>
-TH* download_histo(int run, std::string pass, std::string hname, long ts, std::vector<long>* val = NULL, bool verbose = false)
+TH* download_histo(long ts, std::vector<long>* val = NULL, bool verbose = false)
 {
-  std::string s_run = std::to_string(run);
+  std::string s_run = std::to_string(_run);
   // create metadata:
   std::map<std::string, std::string> metadata;
   metadata["RunNumber"] = s_run;
-  metadata["PassName"] = pass;
+  if(_pass != "online") metadata["PassName"] = _pass;
   // print the used metadata:
   std::string date = timestamp_to_date_string(ts);
   std::cout << "\nDownloading for: " << date << " (" << ts << ")\n";
@@ -101,10 +108,10 @@ TH* download_histo(int run, std::string pass, std::string hname, long ts, std::v
     std::cout << "\n";
   }
   // retrieve the histogram
-  TH* h = api_qcdb.retrieveFromTFileAny<TH>(hname,metadata,ts);
+  TH* h = api_qcdb.retrieveFromTFileAny<TH>(_path+_hname,metadata,ts);
   // retrieve its headers
   if(h) {
-    std::map<std::string, std::string> headers = api_qcdb.retrieveHeaders(hname,metadata,ts);
+    std::map<std::string, std::string> headers = api_qcdb.retrieveHeaders(_path+_hname,metadata,ts);
     // print all the headers
     if(verbose) {
       std::map<std::string, std::string>::iterator it;
@@ -128,7 +135,69 @@ TH* download_histo(int run, std::string pass, std::string hname, long ts, std::v
   return h;
 }
 
-void mft_moving_windows (int run, std::string pass, std::string hname, bool verbose = false)
+TCanvas* plot_histos (TH1F* h_curr, std::vector<long>* val_curr, float y_max = 0, 
+  TH1F* h_next = NULL, std::vector<long>* val_next = NULL)
+{
+  int n_rows = 1;
+  if(h_next) n_rows++;
+  if(y_max == 0) y_max = h_curr->GetMaximum() * 1.05;
+
+  TCanvas* c = new TCanvas("c", "", 900, 700);
+  c->SetTopMargin(0.11);
+  c->SetBottomMargin(0.1);
+  c->SetLeftMargin(0.1);
+  c->SetRightMargin(0.02);
+  c->cd();
+
+  h_curr->SetLineColor(kBlue);
+  h_curr->SetLineStyle(1);
+  h_curr->SetLineWidth(2);
+
+  if(_opt_hist.find("logx") != string::npos) c->SetLogx();
+  if(_opt_hist.find("logy") != string::npos) {
+    float y_min = h_curr->GetMinimum(0);
+    h_curr->GetYaxis()->SetRangeUser(y_min, y_max);
+    c->SetLogy(); 
+  } else {
+    h_curr->GetYaxis()->SetRangeUser(0, y_max);
+  }
+
+  h_curr->GetYaxis()->SetLabelSize(0.036);
+  h_curr->GetXaxis()->SetLabelSize(0.036);
+  h_curr->Draw(_opt_plot.data());
+
+  if (h_next) {
+    h_next->SetLineColor(kRed);
+    h_next->SetLineStyle(2);
+    h_next->SetLineWidth(2);
+    h_next->Draw(Form("%s same", _opt_plot.data()));
+  }
+
+  TLegend* l = new TLegend(0.66, 0.99-n_rows*0.05, 0.98, 0.99);
+  l->AddEntry(h_curr,Form("%s#minus%s", 
+    timestamp_to_date_string(val_curr->at(0), true, false).data(), 
+    timestamp_to_date_string(val_curr->at(1), true, false).data()),"L");
+  if(h_next) {
+    l->AddEntry(h_next,Form("%s#minus%s", 
+      timestamp_to_date_string(val_next->at(0), true, false).data(), 
+      timestamp_to_date_string(val_next->at(1), true, false).data()),"L");
+  }
+  l->SetTextSize(0.036);
+  l->SetBorderSize(0);
+  l->SetFillStyle(0);
+  l->SetMargin(0.30);
+  l->Draw();
+
+  TLatex* ltx = new TLatex();
+  ltx->SetTextSize(0.04);
+  ltx->SetTextAlign(12);
+  ltx->SetNDC();
+  ltx->DrawLatex(0.1,0.94,Form("%s", h_curr->GetTitle()));
+
+  return c;
+}
+
+void run_moving_windows (bool verbose = false)
 {
   gSystem->Exec("mkdir -p root_files/");
   gStyle->SetOptStat(0);
@@ -138,14 +207,14 @@ void mft_moving_windows (int run, std::string pass, std::string hname, bool verb
   api_ccdb.init("alice-ccdb.cern.ch");
   api_qcdb.init("ali-qcdb-gpn.cern.ch:8083");
 
-  long ts_sor = get_timestamp(run, str_sor);
-  long ts_eor = get_timestamp(run, str_eor);
+  long ts_sor = get_timestamp(_run, _str_sor);
+  long ts_eor = get_timestamp(_run, _str_eor);
 
-  std::string fname = Form("root_files/%i_%s.root", run, pass.data());
+  std::string fname = Form("root_files/%i_%s.root", _run, _pass.data());
 
   // download the objects
   bool fexists = !gSystem->AccessPathName(fname.data());
-  if(fexists && !rewrite_root) {
+  if(fexists && !_rewrite_root) {
     std::cout << fname << " already downloaded -> skipping\n";
   } else {
     TFile* f = new TFile(fname.data(), "recreate");
@@ -155,7 +224,7 @@ void mft_moving_windows (int run, std::string pass, std::string hname, bool verb
     while (next_obj_exists)
     {
       std::vector<long> val;
-      TH1F* h = download_histo<TH1F>(run, pass, mw_path+hname, current_ts, &val);
+      TH1F* h = download_histo<TH1F>(current_ts, &val);
       if(h) {
         int n_bins = h->GetNbinsX();
         float x_low = h->GetBinLowEdge(1);
@@ -167,6 +236,7 @@ void mft_moving_windows (int run, std::string pass, std::string hname, bool verb
         h_new->GetXaxis()->SetTitle(h->GetXaxis()->GetTitle());
         h_new->GetYaxis()->SetTitle(h->GetYaxis()->GetTitle());
         for(int i = 1; i <= n_bins; i++) h_new->SetBinContent(i, h->GetBinContent(i));
+        if(_opt_hist.find("rebinROF") != string::npos) h_new = rebin_rof(h_new);
         arr->Add(h_new);
         current_ts = valid_until + 1;
         if (current_ts >= ts_eor) next_obj_exists = false;
@@ -176,94 +246,99 @@ void mft_moving_windows (int run, std::string pass, std::string hname, bool verb
       }
     }
     f->cd();
-    arr->Write(hname.data(), TObject::kSingleKey);
+    arr->Write(_hname.data(), TObject::kSingleKey);
     f->Write("",TObject::kWriteDelete);
     f->Close();
   }
 
-  // plot the objects
-  gSystem->Exec(Form("mkdir -p plots/%i_%s/", run, pass.data()));
+  // plot the objects:
+
+  gSystem->Exec(Form("mkdir -p plots/%i_%s/", _run, _pass.data()));
   TFile* f = TFile::Open(fname.data());
-  TObjArray *arr = (TObjArray*) f->Get(hname.data());
+  TObjArray *arr = (TObjArray*) f->Get(_hname.data());
+
+  TH1F* h_total;
+  std::vector<long> val_total;
+  TH1F* h_first = (TH1F*)arr->At(0);
+  if(h_first) {
+    int n_bins = h_first->GetNbinsX();
+    float x_low = h_first->GetBinLowEdge(1);
+    float x_upp = h_first->GetBinLowEdge(n_bins+1);
+    h_total = new TH1F("total", _title.data(), n_bins, x_low, x_upp);
+    if(_opt_hist.find("rebinROF") != string::npos) h_total = rebin_rof(h_total);
+  }
 
   // get the maximum
   float y_max = 0;
   for (int i = 0; i < arr->GetEntries(); i++)
   {
     TH1F* h_curr = (TH1F*)arr->At(i);
+    h_total->Add(h_curr);
     float curr_max = h_curr->GetMaximum() * 1.05;
     if(curr_max > y_max) y_max = curr_max;
   }
+  h_total->Scale(1./arr->GetEntries()); // an approximation!
 
   for (int i = 0; i < arr->GetEntries(); i++)
   {
     TH1F* h_curr = (TH1F*)arr->At(i);
 
     std::vector<long> val_curr = get_validity_from_name(h_curr->GetName());
+    if(i == 0) val_total.push_back(val_curr.at(0));
+    if(i == arr->GetEntries()-1) val_total.push_back(val_curr.at(0));
     if(verbose) {
       std::cout << "Histogram validity: \n"
         << " * from: " << timestamp_to_date_string(val_curr.at(0)) << " (" << val_curr.at(0) << ")\n"
         << " * until: " << timestamp_to_date_string(val_curr.at(1)) << " (" << val_curr.at(1) << ")\n";
     }
-    h_curr->SetTitle(Form("%s (%lis window)", h_curr->GetTitle(), (val_curr.at(1)-val_curr.at(0)) / 1000));
-
-    TCanvas* c = new TCanvas("c", "", 900, 700);
-    c->SetTopMargin(0.11);
-    c->SetBottomMargin(0.1);
-    c->SetLeftMargin(0.1);
-    c->SetRightMargin(0.02);
-    c->cd();
-    h_curr->SetLineColor(kBlue);
-    h_curr->SetLineStyle(1);
-    h_curr->SetLineWidth(2);
-    h_curr->GetYaxis()->SetRangeUser(0, y_max);
-    h_curr->GetYaxis()->SetLabelSize(0.036);
-    h_curr->GetXaxis()->SetLabelSize(0.036);
-    h_curr->Draw();
+    std::string htitle = h_curr->GetTitle();
+    if(!_title.empty()) htitle = _title;
+    h_curr->SetTitle(Form("%s (%lis window)", htitle.data(), (val_curr.at(1)-val_curr.at(0)) / 1000));
 
     TH1F* h_next = NULL;
     std::vector<long> val_next;
-    int n_rows = 1;
-    if (i < arr->GetEntries()-1)
-    {
-      n_rows++;
+    if (i < arr->GetEntries()-1) {
       h_next = (TH1F*)arr->At(i+1);
       val_next = get_validity_from_name(h_next->GetName());
-      c->cd();
-      h_next->SetLineColor(kRed);
-      h_next->SetLineStyle(2);
-      h_next->SetLineWidth(2);
-      h_next->Draw("same");
     }
 
-    TLegend l(0.66, 0.99-n_rows*0.05, 0.98, 0.99);
-    l.AddEntry(h_curr,Form("%s#minus%s", 
-      timestamp_to_date_string(val_curr.at(0), true, false).data(), 
-      timestamp_to_date_string(val_curr.at(1), true, false).data()),"L");
-    if(h_next) {
-      l.AddEntry(h_next,Form("%s#minus%s", 
-        timestamp_to_date_string(val_next.at(0), true, false).data(), 
-        timestamp_to_date_string(val_next.at(1), true, false).data()),"L");
-    }
-    l.SetTextSize(0.036);
-    l.SetBorderSize(0);
-    l.SetFillStyle(0);
-    l.SetMargin(0.30);
-    l.Draw();
-
-    TLatex ltx;
-    ltx.SetTextSize(0.04);
-    ltx.SetTextAlign(12);
-    ltx.SetNDC();
-    ltx.DrawLatex(0.1,0.94,Form("%s", h_curr->GetTitle()));
-
-    c->Print(Form("plots/%i_%s/%s_%li.pdf", run, pass.data(), hname.data(), val_curr.at(0)));
+    TCanvas* c = plot_histos(h_curr, &val_curr, y_max, h_next, &val_next);
+    c->Print(Form("plots/%i_%s/%s_%li.pdf", _run, _pass.data(), _hname.data(), val_curr.at(0)));
     delete c;
   }
+
+  TCanvas* c_tot = plot_histos(h_total, &val_total);
+  c_tot->Print(Form("plots/%i_%s/%s_total.pdf", _run, _pass.data(), _hname.data()));
+  delete c_tot;
 
   f->Close();
 
   std::cout << "\nDone\n";
   return;
+}
+
+void mft_moving_windows (
+  int run, 
+  std::string pass, 
+  std::string path, 
+  std::string hname, 
+  std::string title, 
+  std::string opt_hist,
+  std::string opt_plot,
+  std::string str_sor,
+  std::string str_eor,
+  bool rewrite_root
+) {
+  _run = run;
+  _pass = pass;
+  _path = path;
+  _hname = hname;
+  _title = title;
+  _opt_hist = opt_hist;
+  _opt_plot = opt_plot;
+  _str_sor = str_sor;
+  _str_eor = str_eor;
+  _rewrite_root = rewrite_root;
+  run_moving_windows();
 }
   
