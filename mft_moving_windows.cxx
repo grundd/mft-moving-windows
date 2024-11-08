@@ -35,6 +35,7 @@ std::string _str_sor;
 std::string _str_eor;
 bool _plot_next;
 bool _rewrite_root;
+int _aggr_histo;
 
 long get_timestamp (int run, std::string str) 
 {
@@ -269,6 +270,10 @@ void run_moving_windows (bool verbose = false)
     if(_opt_hist.find("rebinROF") != string::npos) h_total = rebin_rof(h_total);
   }
 
+  TH1F* h_aggr;
+  std::vector<long> val_aggr;
+  if(_aggr_histo > 0) h_aggr = (TH1F*)h_total->Clone();
+
   // get the maximum
   float y_max = 0;
   for (int i = 0; i < arr->GetEntries(); i++)
@@ -280,6 +285,7 @@ void run_moving_windows (bool verbose = false)
   }
   h_total->Scale(1./arr->GetEntries()); // an approximation!
 
+  int n_aggr = 0;
   for (int i = 0; i < arr->GetEntries(); i++)
   {
     TH1F* h_curr = (TH1F*)arr->At(i);
@@ -306,6 +312,32 @@ void run_moving_windows (bool verbose = false)
     TCanvas* c = plot_histos(h_curr, &val_curr, y_max, h_next, &val_next);
     c->Print(Form("plots/%i_%s/%s_%li.pdf", _run, _pass.data(), _hname.data(), val_curr.at(0)));
     delete c;
+
+    if (_aggr_histo > 0) 
+    {
+      std::vector<long> val_new = get_validity_from_name(h_curr->GetName());
+      if(h_aggr->GetEntries() == 0) {
+        val_aggr.push_back(val_new.at(0));
+        val_aggr.push_back(val_new.at(1));
+      } else {
+        val_aggr.at(1) = val_new.at(1);
+      }
+      h_aggr->Add(h_curr);
+
+
+      if (((i+1) % _aggr_histo == 0) || i == arr->GetEntries()-1) 
+      {
+        h_aggr->Scale(1./_aggr_histo);
+
+        n_aggr++;
+        TCanvas* c_aggr = plot_histos(h_aggr, &val_aggr, y_max);
+        c_aggr->Print(Form("plots/%i_%s/%s_%02i.pdf", _run, _pass.data(), _hname.data(), n_aggr));
+        delete c_aggr;
+
+        h_aggr->Reset();
+        val_aggr.clear();
+      }
+    }
   }
 
   TCanvas* c_tot = plot_histos(h_total, &val_total);
@@ -329,7 +361,8 @@ void mft_moving_windows (
   std::string str_sor,
   std::string str_eor,
   bool plot_next,
-  bool rewrite_root
+  bool rewrite_root,
+  int aggr_histo
 ) {
   _run = run;
   _pass = pass;
@@ -342,6 +375,7 @@ void mft_moving_windows (
   _str_eor = str_eor;
   _plot_next = plot_next;
   _rewrite_root = rewrite_root;
+  _aggr_histo = aggr_histo;
   run_moving_windows();
 }
   
