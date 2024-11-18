@@ -1,7 +1,7 @@
 # chmod +x run_mft_aqc_mw.sh
 #!/bin/bash
 
-run=559632
+run=559544
 pass=online
 path="qc/MFT/MO/MFTClusterTask/mw/" #qc_async/MFT/MO/Tracks/mw/
 hname=mClustersROFSize
@@ -12,7 +12,7 @@ str_sor="STF"
 str_eor="EOR"
 plot_next=true
 rewrite_root=false
-aggr_histo=5
+aggr_histo=0
 
 root -b -l <<EOF
 .L mft_moving_windows.cxx

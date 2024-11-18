@@ -36,6 +36,7 @@ std::string _str_eor;
 bool _plot_next;
 bool _rewrite_root;
 int _aggr_histo;
+long increment = 60000; // 1 min = 60 * 1000 ms
 
 long get_timestamp (int run, std::string str) 
 {
@@ -227,7 +228,7 @@ void run_moving_windows (bool verbose = false)
     {
       std::vector<long> val;
       TH1F* h = download_histo<TH1F>(current_ts, &val);
-      if(h) {
+      if (h) {
         int n_bins = h->GetNbinsX();
         float x_low = h->GetBinLowEdge(1);
         float x_upp = h->GetBinLowEdge(n_bins+1);
@@ -242,8 +243,12 @@ void run_moving_windows (bool verbose = false)
         arr->Add(h_new);
         current_ts = valid_until + 1;
         if (current_ts >= ts_eor) next_obj_exists = false;
+      } else if (current_ts < ts_eor) {
+        std::cout << "The object for " << timestamp_to_date_string(current_ts) << " not found!\n";
+        current_ts += increment;
+        std::cout << " -> increasing the timestamp to " << timestamp_to_date_string(current_ts) << "\n";
       } else {
-        std::cout << "The object does not exist!\n";
+        std::cout << "EOR timestamp exceeded and the object does not exist!\n";
         next_obj_exists = false;
       }
     }
@@ -258,6 +263,11 @@ void run_moving_windows (bool verbose = false)
   gSystem->Exec(Form("mkdir -p plots/%i_%s/", _run, _pass.data()));
   TFile* f = TFile::Open(fname.data());
   TObjArray *arr = (TObjArray*) f->Get(_hname.data());
+
+  if (arr->IsEmpty()) {
+    std::cout << "Empty object array, no histograms to plot!\n";
+    return;
+  } 
 
   TH1F* h_total;
   std::vector<long> val_total;
